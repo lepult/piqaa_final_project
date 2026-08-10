@@ -28,6 +28,7 @@ from qgis.PyQt.QtCore import QCoreApplication, QVariant
 from qgis.core import (
     QgsProcessing,
     QgsProcessingAlgorithm,
+    QgsProcessingContext,
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterString,
     QgsProcessingParameterFeatureSink,
@@ -45,7 +46,17 @@ from qgis.core import (
 
 import processing
 
-from helper import add_layer_to_load_on_completion
+
+def add_layer_to_load_on_completion(context, destination, layer_name):
+    if not context or not destination:
+        return
+
+    details = QgsProcessingContext.LayerDetails(
+        layer_name,
+        context.project() if context.project() else QgsProject.instance(),
+        layer_name,
+    )
+    context.addLayerToLoadOnCompletion(destination, details)
 
 
 class BuildReferenceLayer(QgsProcessingAlgorithm):

@@ -11,14 +11,29 @@ from qgis.core import (
     QgsProcessingParameterRasterDestination,
     QgsProcessingParameterRasterLayer,
 )
+import processing
 
-from ndvi_creation import compute_ndvi
-from helper import run_geobia_step
-from parameters import (
-    TEXTURE_EXTRACTION_NBBIN_PARAM,
-    TEXTURE_EXTRACTION_XRAD_PARAMETER,
-    TEXTURE_EXTRACTION_YRAD_PARAMETER,
-)
+TEXTURE_EXTRACTION_XRAD_PARAMETER = 2
+TEXTURE_EXTRACTION_YRAD_PARAMETER = 2
+TEXTURE_EXTRACTION_NBBIN_PARAM = 8
+
+
+def run_step(alg_id, params, context, feedback):
+    return processing.run(alg_id, params, context=context, feedback=feedback)
+
+
+def compute_ndvi(input_raster, output_path, context, feedback, nir_band=4, red_band=1):
+    params = {
+        "INPUT_A": input_raster,
+        "BAND_A": nir_band,
+        "INPUT_B": input_raster,
+        "BAND_B": red_band,
+        "FORMULA": "(A-B)/(A+B)",
+        "NO_DATA": None,
+        "RTYPE": 5,
+        "OUTPUT": output_path,
+    }
+    return run_step("gdal:rastercalculator", params, context, feedback)
 
 
 class CreateMetricLayers(QgsProcessingAlgorithm):
@@ -212,12 +227,11 @@ class CreateMetricLayers(QgsProcessingAlgorithm):
             }
 
             step_name = f"Texture extraction: {self.CHANNEL_OPTIONS[channel_idx]}"
-            texture_result = run_geobia_step(
+            texture_result = run_step(
                 "otb:HaralickTextureExtraction",
                 params,
-                step_name,
-                context=context,
-                feedback=feedback,
+                context,
+                feedback,
             )
 
             result_map[output_key] = texture_result["out"]

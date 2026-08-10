@@ -4,15 +4,55 @@ from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (
     QgsProcessing,
     QgsProcessingAlgorithm,
+    QgsProcessingContext,
     QgsProcessingException,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFeatureSource,
+    QgsProject,
     QgsProcessingParameterRasterLayer,
 )
+import processing
 
-from helper import add_layer_to_load_on_completion, run_geobia_step
-from shape_metrics import add_shape_metrics
+def run_step(alg_id, params, context, feedback):
+    return processing.run(alg_id, params, context=context, feedback=feedback)
+
+
+def add_layer_to_load_on_completion(context, destination, layer_name):
+    if not context or not destination:
+        return
+
+    details = QgsProcessingContext.LayerDetails(
+        layer_name,
+        context.project() if context.project() else QgsProject.instance(),
+        layer_name,
+    )
+    context.addLayerToLoadOnCompletion(destination, details)
+
+
+def add_shape_metrics(segment_input, output_path, context, feedback):
+    shape_fields = [
+        ("shape_area", "$area"),
+        ("shp_perimeter", "$perimeter"),
+        ("shp_compactness", "(4 * pi() * $area) / ($perimeter^2)"),
+    ]
+
+    current = segment_input
+    for i, (field_name, expression) in enumerate(shape_fields):
+        is_last = i == len(shape_fields) - 1
+        params = {
+            "INPUT": current,
+            "FIELD_NAME": field_name,
+            "FIELD_TYPE": 0,
+            "FIELD_LENGTH": 20,
+            "FIELD_PRECISION": 6,
+            "FORMULA": expression,
+            "OUTPUT": output_path if is_last else "TEMPORARY_OUTPUT",
+        }
+        result = run_step("native:fieldcalculator", params, context, feedback)
+        current = result["OUTPUT"]
+
+    return current
 
 HARALICK_SIMPLE_MEASURES = [
     "energy",
@@ -197,12 +237,11 @@ class AddAttributesToSegments(QgsProcessingAlgorithm):
             }
 
             step_name = f"Zonal stats: {spec['prefix']}"
-            result = run_geobia_step(
+            result = run_step(
                 "native:zonalstatisticsfb",
                 params,
-                step_name,
-                context=context,
-                feedback=feedback,
+                context,
+                feedback,
             )
             current_input = result["OUTPUT"]
 
@@ -215,15 +254,14 @@ class AddAttributesToSegments(QgsProcessingAlgorithm):
                 feedback=feedback,
             )
         elif not raster_specs:
-            save_result = run_geobia_step(
+            save_result = run_step(
                 "native:savefeatures",
                 {
                     "INPUT": current_input,
                     "OUTPUT": output_dest,
                 },
-                "Materialize output",
-                context=context,
-                feedback=feedback,
+                context,
+                feedback,
             )
             current_input = save_result["OUTPUT"]
 

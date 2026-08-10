@@ -9,15 +9,18 @@ from qgis.core import (
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterNumber,
     QgsProcessingParameterRasterLayer,
+    QgsProcessingUtils,
 )
+import processing
 
-from constants import CLASS_FIELD_NAME
-from helper import run_geobia_step
-from parameters import (
-    SEGMENTATION_MINSIZE_PARAM,
-    SEGMENTATION_RANGER_PARAM,
-    SEGMENTATION_SPATIALR_PARAM,
-)
+CLASS_FIELD_NAME = "class"
+SEGMENTATION_SPATIALR_PARAM = 20
+SEGMENTATION_RANGER_PARAM = 15
+SEGMENTATION_MINSIZE_PARAM = 50
+
+
+def run_step(alg_id, params, context, feedback):
+    return processing.run(alg_id, params, context=context, feedback=feedback)
 
 
 class SegmentImage(QgsProcessingAlgorithm):
@@ -112,7 +115,8 @@ class SegmentImage(QgsProcessingAlgorithm):
             raise QgsProcessingException("Could not read input imagery.")
 
         reference_source = self.parameterAsSource(parameters, self.REFERENCE_LAYER, context)
-        if reference_source is None:
+        reference_layer = self.parameterAsVectorLayer(parameters, self.REFERENCE_LAYER, context)
+        if reference_source is None or reference_layer is None:
             raise QgsProcessingException("Could not read reference layer.")
 
         spatialr = self.parameterAsInt(parameters, self.SPATIAL_RADIUS, context)
@@ -123,6 +127,11 @@ class SegmentImage(QgsProcessingAlgorithm):
         if not output_dest:
             raise QgsProcessingException("Could not resolve output destination for labeled segments.")
 
+        # OTB can fail committing GeoPackage transactions on some setups.
+        # Use an explicit Shapefile path for robust intermediate vector output.
+        seg_vector_path = QgsProcessingUtils.generateTempFilename("segment_image_intermediate.shp")
+        seg_raster_path = QgsProcessingUtils.generateTempFilename("segment_image_intermediate_labelmap.tif")
+
         seg_params = {
             "in": imagery_layer.source(),
             "spatialr": spatialr,
@@ -132,18 +141,17 @@ class SegmentImage(QgsProcessingAlgorithm):
             "tilesizey": 500,
             "mode": "vector",
             "mode.vector.imfield": None,
-            "mode.vector.out": "TEMPORARY_OUTPUT",
-            "mode.raster.out": "TEMPORARY_OUTPUT",
+            "mode.vector.out": seg_vector_path,
+            "mode.raster.out": seg_raster_path,
             "cleanup": True,
             "outputpixeltype": 5,
         }
 
-        seg_result = run_geobia_step(
+        seg_result = run_step(
             "otb:LargeScaleMeanShift",
             seg_params,
-            "Segmentation",
-            context=context,
-            feedback=feedback,
+            context,
+            feedback,
         )
 
         seg_output = seg_result.get("mode.vector.out") or seg_result.get("OUTPUT")
@@ -153,7 +161,7 @@ class SegmentImage(QgsProcessingAlgorithm):
         label_params = {
             "INPUT": seg_output,
             "PREDICATE": [0],
-            "JOIN": reference_source,
+            "JOIN": reference_layer,
             "JOIN_FIELDS": [CLASS_FIELD_NAME],
             "METHOD": 2,
             "DISCARD_NONMATCHING": False,
@@ -161,12 +169,11 @@ class SegmentImage(QgsProcessingAlgorithm):
             "OUTPUT": output_dest,
         }
 
-        label_result = run_geobia_step(
+        label_result = run_step(
             "native:joinattributesbylocation",
             label_params,
-            "Label segments from reference polygons",
-            context=context,
-            feedback=feedback,
+            context,
+            feedback,
         )
 
         return {
