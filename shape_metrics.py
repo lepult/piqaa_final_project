@@ -1,4 +1,3 @@
-from constants import PROJECT_PATH, ZONAL_STATISTICS_OUTPUT_FILE_NAME, RANDOM_FOREST_READY_SEGMENTS_FILE_NAME
 from helper import run_geobia_step
 
 SHAPE_FIELDS = [
@@ -7,10 +6,7 @@ SHAPE_FIELDS = [
     ('shp_compactness', '(4 * pi() * $area) / ($perimeter^2)'),
 ]
 
-SHAPE_METRICS_OUTPUT_FILE_NAME = 'aoi_segments_with_shape_metrics.gpkg'
-
-
-def add_shape_metrics(segment_input, output_path, fields=SHAPE_FIELDS):
+def add_shape_metrics(segment_input, output_path, fields=SHAPE_FIELDS, context=None, feedback=None):
     """Chains Field Calculator once per shape field, writing only the last step to disk."""
     current = segment_input
     for i, (field_name, expression) in enumerate(fields):
@@ -24,12 +20,12 @@ def add_shape_metrics(segment_input, output_path, fields=SHAPE_FIELDS):
             'FORMULA': expression,
             'OUTPUT': output_path if is_last else 'TEMPORARY_OUTPUT',
         }
-        result = run_geobia_step('native:fieldcalculator', params, f"Shape metric: {field_name}")
+        result = run_geobia_step(
+            'native:fieldcalculator',
+            params,
+            f"Shape metric: {field_name}",
+            context=context,
+            feedback=feedback,
+        )
         current = result['OUTPUT']
     return current
-
-
-add_shape_metrics(
-    segment_input=f'{PROJECT_PATH}/{ZONAL_STATISTICS_OUTPUT_FILE_NAME}|layername=aoi_segments_with_zonal_statistics_attributes',
-    output_path=f'{PROJECT_PATH}/{RANDOM_FOREST_READY_SEGMENTS_FILE_NAME}',
-)

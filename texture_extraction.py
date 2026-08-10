@@ -1,95 +1,236 @@
-from parameters import TEXTURE_EXTRACTION_XRAD_PARAMETER, TEXTURE_EXTRACTION_YRAD_PARAMETER, TEXTURE_EXTRACTION_NBBIN_PARAM
-from constants import PROJECT_PATH, AOI_IMAGERY_NAME, DEFAULT_BAND_NAMES, DERIVED_INDICES_GROUP_NAME
-from helper import log
-from helper import run_geobia_step
+# -*- coding: utf-8 -*-
 
-def run_haralick_all_bands(
-    input_raster,
-    output_dir,
-    band_names=DEFAULT_BAND_NAMES,
-    group_name=DERIVED_INDICES_GROUP_NAME,
-    step=1,
-    xrad=TEXTURE_EXTRACTION_XRAD_PARAMETER,
-    yrad=TEXTURE_EXTRACTION_YRAD_PARAMETER,
-    xoff=1,
-    yoff=1,
-    pixel_min=0,
-    pixel_max=255,
-    nbbin=TEXTURE_EXTRACTION_NBBIN_PARAM,
-    texture='simple',
-):
-    """
-    Runs otb:HaralickTextureExtraction once per band (channel 1-4) on
-    input_raster, saves each output into output_dir, and adds each
-    result to a dedicated layer group in the current QGIS project.
- 
-    band_names order must match the actual band order of input_raster
-    (default assumes band 1=red, 2=green, 3=blue, 4=nir).
- 
-    Returns a dict: {band_name: {'params': ..., 'result': ..., 'path': ...}}
-    """
-    if len(band_names) != 4:
-        raise ValueError("band_names must have exactly 4 entries (one per channel 1-4)")
- 
-    # --- Set up (or find) the destination layer group ---
-    root = QgsProject.instance().layerTreeRoot()
-    group = root.findGroup(group_name)
-    if group is None:
-        group = root.insertGroup(0, group_name)
-        log(f"Created layer group: {group_name}")
-    else:
-        log(f"Using existing layer group: {group_name}")
- 
-    outputs = {}
- 
-    for channel, band_name in enumerate(band_names, start=1):
-        step_name = f"GLCM texture extraction ({band_name} band, channel {channel})"
-        out_path = f'{output_dir}/{get_output_file_name(band_name=band_name)}'
- 
-        params = {
-            'in': input_raster,
-            'channel': channel,
-            'step': step,
-            'parameters.xrad': xrad,
-            'parameters.yrad': yrad,
-            'parameters.xoff': xoff,
-            'parameters.yoff': yoff,
-            'parameters.min': pixel_min,
-            'parameters.max': pixel_max,
-            'parameters.nbbin': nbbin,
-            'texture': texture,
-            'out': out_path,
-        }
- 
-        result = run_geobia_step('otb:HaralickTextureExtraction', params, step_name)
-        outputs[band_name] = {'params': params, 'result': result, 'path': out_path}
- 
-        # --- Load the output raster and add it to the group ---
-        raster_layer = QgsRasterLayer(out_path, f'haralick_{band_name}')
-        if not raster_layer.isValid():
-            log(f"WARNING: output raster failed to load: {out_path}", Qgis.MessageLevel.Warning)
-            continue
- 
-        QgsProject.instance().addMapLayer(raster_layer, False)  # False = don't add to root/legend directly
-        group.addLayer(raster_layer)
-        log(f"Added layer 'haralick_{band_name}' to group '{group_name}'")
- 
-    iface.messageBar().pushSuccess("GEOBIA", f"Haralick texture extraction complete for {len(band_names)} bands.")
-    return outputs
-
-def get_output_file_name(
-    band_name,
-    band_number=None,
-    band_names=DEFAULT_BAND_NAMES,
-):
-    if (band_number != None):
-        return f'textures_{DEFAULT_BAND_NAMES[band_number]}_band.tif'
-
-    return f'textures_{band_name}_band.tif'
- 
-
-# --- Run it ---
-haralick_outputs = run_haralick_all_bands(
-    input_raster=f'{PROJECT_PATH}/{AOI_IMAGERY_NAME}',
-    output_dir=PROJECT_PATH,
+from qgis.PyQt.QtCore import QCoreApplication
+from qgis.core import (
+    QgsProcessing,
+    QgsProcessingAlgorithm,
+    QgsProcessingException,
+    QgsProcessingParameterBoolean,
+    QgsProcessingParameterEnum,
+    QgsProcessingParameterNumber,
+    QgsProcessingParameterRasterDestination,
+    QgsProcessingParameterRasterLayer,
 )
+
+from ndvi_creation import compute_ndvi
+from helper import run_geobia_step
+from parameters import (
+    TEXTURE_EXTRACTION_NBBIN_PARAM,
+    TEXTURE_EXTRACTION_XRAD_PARAMETER,
+    TEXTURE_EXTRACTION_YRAD_PARAMETER,
+)
+
+
+class CreateMetricLayers(QgsProcessingAlgorithm):
+    IMAGERY = "IMAGERY"
+    TEXTURE_CHANNELS = "TEXTURE_CHANNELS"
+    XRAD = "XRAD"
+    YRAD = "YRAD"
+    NBBIN = "NBBIN"
+    COMPUTE_NDVI = "COMPUTE_NDVI"
+    NDVI_OUTPUT = "NDVI_OUTPUT"
+    TEXTURE_RED = "TEXTURE_RED"
+    TEXTURE_GREEN = "TEXTURE_GREEN"
+    TEXTURE_BLUE = "TEXTURE_BLUE"
+    TEXTURE_NIR = "TEXTURE_NIR"
+
+    CHANNEL_OPTIONS = ["Red", "Green", "Blue", "NIR"]
+
+    def tr(self, string):
+        return QCoreApplication.translate("CreateMetricLayers", string)
+
+    def createInstance(self):
+        return CreateMetricLayers()
+
+    def name(self):
+        return "create_metric_layers"
+
+    def displayName(self):
+        return self.tr("04 - Create Metric Layers")
+
+    def group(self):
+        return self.tr("LBS Workflow")
+
+    def groupId(self):
+        return "lbs_workflow"
+
+    def shortHelpString(self):
+        return self.tr(
+            "Creates Haralick texture layers for selected channels and optionally "
+            "creates an NDVI raster from the same imagery."
+        )
+
+    def initAlgorithm(self, config=None):
+        self.addParameter(
+            QgsProcessingParameterRasterLayer(
+                self.IMAGERY,
+                self.tr("Input imagery"),
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.TEXTURE_CHANNELS,
+                self.tr("Texture channels"),
+                options=self.CHANNEL_OPTIONS,
+                allowMultiple=True,
+                defaultValue=[0, 1, 2, 3],
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.XRAD,
+                self.tr("Texture X radius"),
+                type=QgsProcessingParameterNumber.Integer,
+                defaultValue=TEXTURE_EXTRACTION_XRAD_PARAMETER,
+                minValue=1,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.YRAD,
+                self.tr("Texture Y radius"),
+                type=QgsProcessingParameterNumber.Integer,
+                defaultValue=TEXTURE_EXTRACTION_YRAD_PARAMETER,
+                minValue=1,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.NBBIN,
+                self.tr("Texture number of bins"),
+                type=QgsProcessingParameterNumber.Integer,
+                defaultValue=TEXTURE_EXTRACTION_NBBIN_PARAM,
+                minValue=2,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.COMPUTE_NDVI,
+                self.tr("Compute NDVI"),
+                defaultValue=True,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterRasterDestination(
+                self.TEXTURE_RED,
+                self.tr("Texture raster (Red)"),
+                optional=True,
+                createByDefault=False,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterRasterDestination(
+                self.TEXTURE_GREEN,
+                self.tr("Texture raster (Green)"),
+                optional=True,
+                createByDefault=False,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterRasterDestination(
+                self.TEXTURE_BLUE,
+                self.tr("Texture raster (Blue)"),
+                optional=True,
+                createByDefault=False,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterRasterDestination(
+                self.TEXTURE_NIR,
+                self.tr("Texture raster (NIR)"),
+                optional=True,
+                createByDefault=False,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterRasterDestination(
+                self.NDVI_OUTPUT,
+                self.tr("NDVI raster"),
+                optional=True,
+                createByDefault=False,
+            )
+        )
+
+    def processAlgorithm(self, parameters, context, feedback):
+        imagery_layer = self.parameterAsRasterLayer(parameters, self.IMAGERY, context)
+        if imagery_layer is None:
+            raise QgsProcessingException("Could not read input imagery.")
+
+        channels = self.parameterAsEnums(parameters, self.TEXTURE_CHANNELS, context)
+        if not channels:
+            channels = [0, 1, 2, 3]
+
+        xrad = self.parameterAsInt(parameters, self.XRAD, context)
+        yrad = self.parameterAsInt(parameters, self.YRAD, context)
+        nbbin = self.parameterAsInt(parameters, self.NBBIN, context)
+        do_ndvi = self.parameterAsBool(parameters, self.COMPUTE_NDVI, context)
+
+        channel_output_keys = {
+            0: self.TEXTURE_RED,
+            1: self.TEXTURE_GREEN,
+            2: self.TEXTURE_BLUE,
+            3: self.TEXTURE_NIR,
+        }
+
+        result_map = {
+            self.TEXTURE_RED: "",
+            self.TEXTURE_GREEN: "",
+            self.TEXTURE_BLUE: "",
+            self.TEXTURE_NIR: "",
+            self.NDVI_OUTPUT: "",
+        }
+
+        for channel_idx in channels:
+            output_key = channel_output_keys[channel_idx]
+            output_dest = self.parameterAsOutputLayer(parameters, output_key, context)
+            if not output_dest:
+                continue
+
+            params = {
+                "in": imagery_layer.source(),
+                "channel": channel_idx + 1,
+                "step": 1,
+                "parameters.xrad": xrad,
+                "parameters.yrad": yrad,
+                "parameters.xoff": 1,
+                "parameters.yoff": 1,
+                "parameters.min": 0,
+                "parameters.max": 255,
+                "parameters.nbbin": nbbin,
+                "texture": "simple",
+                "out": output_dest,
+            }
+
+            step_name = f"Texture extraction: {self.CHANNEL_OPTIONS[channel_idx]}"
+            texture_result = run_geobia_step(
+                "otb:HaralickTextureExtraction",
+                params,
+                step_name,
+                context=context,
+                feedback=feedback,
+            )
+
+            result_map[output_key] = texture_result["out"]
+
+        if do_ndvi:
+            ndvi_dest = self.parameterAsOutputLayer(parameters, self.NDVI_OUTPUT, context)
+            if ndvi_dest:
+                ndvi_result = compute_ndvi(
+                    input_raster=imagery_layer.source(),
+                    output_path=ndvi_dest,
+                    context=context,
+                    feedback=feedback,
+                )
+                result_map[self.NDVI_OUTPUT] = ndvi_result["OUTPUT"]
+
+        return result_map

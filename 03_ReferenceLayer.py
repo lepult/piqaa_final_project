@@ -45,6 +45,8 @@ from qgis.core import (
 
 import processing
 
+from helper import add_layer_to_load_on_completion
+
 
 class BuildReferenceLayer(QgsProcessingAlgorithm):
 
@@ -642,6 +644,12 @@ class BuildReferenceLayer(QgsProcessingAlgorithm):
 
         feedback.pushInfo(
             "=== Build Reference Layer completed ==="
+        )
+
+        add_layer_to_load_on_completion(
+            context,
+            reference_dest,
+            "Reference layer",
         )
 
         return {

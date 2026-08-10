@@ -1,104 +1,234 @@
-from constants import NDVI_OUTPUT_FILE_NAME, PROJECT_PATH, ZONAL_STATISTICS_OUTPUT_FILE_NAME, LABELED_FILE_NAME, LABELED_TABLE_NAME
+# -*- coding: utf-8 -*-
+
+from qgis.PyQt.QtCore import QCoreApplication
+from qgis.core import (
+    QgsProcessing,
+    QgsProcessingAlgorithm,
+    QgsProcessingException,
+    QgsProcessingParameterBoolean,
+    QgsProcessingParameterFeatureSink,
+    QgsProcessingParameterFeatureSource,
+    QgsProcessingParameterRasterLayer,
+)
+
+from helper import add_layer_to_load_on_completion, run_geobia_step
+from shape_metrics import add_shape_metrics
 
 HARALICK_SIMPLE_MEASURES = [
-    'energy',
-    'entropy',
-    'correlation',
-    'invdiffmoment',
-    'inertia',
-    'clustershade',
-    'clusterprominence',
-    'haralickcorr',
+    "energy",
+    "entropy",
+    "correlation",
+    "invdiffmoment",
+    "inertia",
+    "clustershade",
+    "clusterprominence",
+    "haralickcorr",
 ]
- 
- 
+
+
 def build_texture_raster_specs(raster_path, band_label, measure_names=HARALICK_SIMPLE_MEASURES):
-    """
-    Builds the list of {'raster', 'band', 'prefix'} specs for all 8
-    Haralick measure bands of one texture raster (e.g. the red-band
-    texture output), so each ends up with a readable column name
-    like red_entropy_ instead of red_band4_.
-    """
     return [
-        {'raster': raster_path, 'band': i + 1, 'prefix': f'{band_label}_{measure}_'}
+        {"raster": raster_path, "band": i + 1, "prefix": f"{band_label}_{measure}_"}
         for i, measure in enumerate(measure_names)
     ]
- 
- 
-def run_zonal_statistics_pipeline(segment_input, raster_band_specs, final_output_path):
-    """
-    Repeatedly runs native:zonalstatisticsfb, once per raster/band
-    combination in raster_band_specs, chaining each step's output
-    into the next step's input — exactly matching the manual
-    "repeat once per raster/band, ending with one layer with all
-    attributes" workflow described in the documentation.
- 
-    raster_band_specs: list of dicts, each with:
-        'raster' : path to the raster (or 'raster|layername=...' string)
-        'band'   : raster band number (1-indexed)
-        'prefix' : output column prefix, e.g. 'red_entropy_'
- 
-    final_output_path: where the last step writes its result
-        (e.g. a .gpkg path). Intermediate steps use TEMPORARY_OUTPUT.
- 
-    Returns the final output (path or layer, as returned by the
-    last processing.run() call).
-    """
-    current_input = segment_input
- 
-    for i, spec in enumerate(raster_band_specs):
-        is_last = (i == len(raster_band_specs) - 1)
-        output = final_output_path if is_last else 'TEMPORARY_OUTPUT'
- 
-        params = {
-            'INPUT': current_input,
-            'INPUT_RASTER': spec['raster'],
-            'RASTER_BAND': spec['band'],
-            'COLUMN_PREFIX': spec['prefix'],
-            'STATISTICS': [2],  # 2 = Mean only (matches --STATISTICS=2 in the CLI example).
-                                 # Python API expects a list even for a single statistic.
-            'OUTPUT': output,
+
+
+class AddAttributesToSegments(QgsProcessingAlgorithm):
+    SEGMENTS = "SEGMENTS"
+    IMAGERY = "IMAGERY"
+    NDVI = "NDVI"
+    TEXTURE_RED = "TEXTURE_RED"
+    TEXTURE_GREEN = "TEXTURE_GREEN"
+    TEXTURE_BLUE = "TEXTURE_BLUE"
+    TEXTURE_NIR = "TEXTURE_NIR"
+    INCLUDE_SHAPE_METRICS = "INCLUDE_SHAPE_METRICS"
+    OUTPUT = "OUTPUT"
+
+    def tr(self, string):
+        return QCoreApplication.translate("AddAttributesToSegments", string)
+
+    def createInstance(self):
+        return AddAttributesToSegments()
+
+    def name(self):
+        return "add_attributes_to_segments"
+
+    def displayName(self):
+        return self.tr("05 - Add Attributes to Segments")
+
+    def group(self):
+        return self.tr("LBS Workflow")
+
+    def groupId(self):
+        return "lbs_workflow"
+
+    def shortHelpString(self):
+        return self.tr(
+            "Adds zonal texture, spectral, NDVI, and shape metric attributes to a segment layer."
+        )
+
+    def initAlgorithm(self, config=None):
+        self.addParameter(
+            QgsProcessingParameterFeatureSource(
+                self.SEGMENTS,
+                self.tr("Segment layer"),
+                [QgsProcessing.TypeVectorPolygon],
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterRasterLayer(
+                self.IMAGERY,
+                self.tr("Input imagery (bands 1..4 = RGBNIR)"),
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterRasterLayer(
+                self.NDVI,
+                self.tr("NDVI raster"),
+                optional=True,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterRasterLayer(
+                self.TEXTURE_RED,
+                self.tr("Texture raster (Red)"),
+                optional=True,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterRasterLayer(
+                self.TEXTURE_GREEN,
+                self.tr("Texture raster (Green)"),
+                optional=True,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterRasterLayer(
+                self.TEXTURE_BLUE,
+                self.tr("Texture raster (Blue)"),
+                optional=True,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterRasterLayer(
+                self.TEXTURE_NIR,
+                self.tr("Texture raster (NIR)"),
+                optional=True,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.INCLUDE_SHAPE_METRICS,
+                self.tr("Include shape metrics"),
+                defaultValue=True,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterFeatureSink(
+                self.OUTPUT,
+                self.tr("Attributed segments"),
+                QgsProcessing.TypeVectorPolygon,
+            )
+        )
+
+    def processAlgorithm(self, parameters, context, feedback):
+        segments_source = self.parameterAsSource(parameters, self.SEGMENTS, context)
+        if segments_source is None:
+            raise QgsProcessingException("Could not read segment layer.")
+
+        imagery_layer = self.parameterAsRasterLayer(parameters, self.IMAGERY, context)
+        if imagery_layer is None:
+            raise QgsProcessingException("Could not read imagery layer.")
+
+        output_dest = self.parameterAsOutputLayer(parameters, self.OUTPUT, context)
+        if not output_dest:
+            raise QgsProcessingException("Could not resolve output destination.")
+
+        raster_specs = []
+
+        texture_layers = {
+            "red": self.parameterAsRasterLayer(parameters, self.TEXTURE_RED, context),
+            "green": self.parameterAsRasterLayer(parameters, self.TEXTURE_GREEN, context),
+            "blue": self.parameterAsRasterLayer(parameters, self.TEXTURE_BLUE, context),
+            "nir": self.parameterAsRasterLayer(parameters, self.TEXTURE_NIR, context),
         }
- 
-        step_name = f"Zonal stats: {spec['prefix']} (raster band {spec['band']})"
-        result = run_geobia_step('native:zonalstatisticsfb', params, step_name)
-        current_input = result['OUTPUT']
- 
-    iface.messageBar().pushSuccess("GEOBIA", "Zonal statistics complete — all attributes attached.")
-    return current_input
- 
- 
-# --- Build the full list of raster/band combinations to attach ---
-# NOTE: distance/area units and ellipsoid are qgis_process CLI-level
-# settings tied to project measurement configuration, not parameters
-# of native:zonalstatisticsfb itself — they aren't needed in the
-# params dict when calling processing.run() from a script.
- 
-zonal_specs = []
- 
-# Texture rasters: 8 Haralick measure bands each
-zonal_specs += build_texture_raster_specs(haralick_outputs['red']['path'], 'red')
-zonal_specs += build_texture_raster_specs(haralick_outputs['green']['path'], 'green')
-zonal_specs += build_texture_raster_specs(haralick_outputs['blue']['path'], 'blue')
-zonal_specs += build_texture_raster_specs(haralick_outputs['nir']['path'], 'nir')
- 
-# NDVI: single band
-zonal_specs.append({'raster': f'{PROJECT_PATH}/{NDVI_OUTPUT_FILE_NAME}, 'band': 1, 'prefix': 'ndvi_'})
- 
-# Spectral bands from the original imagery
-SPECTRAL_IMAGE_PATH = f'{PROJECT_PATH}/{AOI_IMAGERY_NAME}'  # <-- adjust if this differs from your segmentation input
-zonal_specs += [
-    {'raster': SPECTRAL_IMAGE_PATH, 'band': 1, 'prefix': 'red_'},
-    {'raster': SPECTRAL_IMAGE_PATH, 'band': 2, 'prefix': 'green_'},
-    {'raster': SPECTRAL_IMAGE_PATH, 'band': 3, 'prefix': 'blue_'},
-    {'raster': SPECTRAL_IMAGE_PATH, 'band': 4, 'prefix': 'nir_'},
-]
- 
-# --- Run the chained zonal statistics pipeline ---
-ZONAL_OUTPUT_PATH = f'{PROJECT_PATH}/{ZONAL_STATISTICS_OUTPUT_FILE_NAME}'
- 
-final_attributed_layer = run_zonal_statistics_pipeline(
-    segment_input=f'{PROJECT_PATH}/{LABELED_FILE_NAME}|layername={LABELED_TABLE_NAME}',
-    raster_band_specs=zonal_specs,
-    final_output_path=ZONAL_OUTPUT_PATH,
-)
+
+        for band_label, raster_layer in texture_layers.items():
+            if raster_layer:
+                raster_specs.extend(build_texture_raster_specs(raster_layer.source(), band_label))
+
+        ndvi_layer = self.parameterAsRasterLayer(parameters, self.NDVI, context)
+        if ndvi_layer:
+            raster_specs.append({"raster": ndvi_layer.source(), "band": 1, "prefix": "ndvi_"})
+
+        raster_specs.extend(
+            [
+                {"raster": imagery_layer.source(), "band": 1, "prefix": "red_"},
+                {"raster": imagery_layer.source(), "band": 2, "prefix": "green_"},
+                {"raster": imagery_layer.source(), "band": 3, "prefix": "blue_"},
+                {"raster": imagery_layer.source(), "band": 4, "prefix": "nir_"},
+            ]
+        )
+
+        current_input = segments_source.source()
+
+        for i, spec in enumerate(raster_specs):
+            is_last_raster = i == len(raster_specs) - 1
+            output = "TEMPORARY_OUTPUT"
+
+            if is_last_raster and not self.parameterAsBool(parameters, self.INCLUDE_SHAPE_METRICS, context):
+                output = output_dest
+
+            params = {
+                "INPUT": current_input,
+                "INPUT_RASTER": spec["raster"],
+                "RASTER_BAND": spec["band"],
+                "COLUMN_PREFIX": spec["prefix"],
+                "STATISTICS": [2],
+                "OUTPUT": output,
+            }
+
+            step_name = f"Zonal stats: {spec['prefix']}"
+            result = run_geobia_step(
+                "native:zonalstatisticsfb",
+                params,
+                step_name,
+                context=context,
+                feedback=feedback,
+            )
+            current_input = result["OUTPUT"]
+
+        include_shape = self.parameterAsBool(parameters, self.INCLUDE_SHAPE_METRICS, context)
+        if include_shape:
+            current_input = add_shape_metrics(
+                current_input,
+                output_dest,
+                context=context,
+                feedback=feedback,
+            )
+        elif not raster_specs:
+            save_result = run_geobia_step(
+                "native:savefeatures",
+                {
+                    "INPUT": current_input,
+                    "OUTPUT": output_dest,
+                },
+                "Materialize output",
+                context=context,
+                feedback=feedback,
+            )
+            current_input = save_result["OUTPUT"]
+
+        add_layer_to_load_on_completion(context, current_input, "Attributed segments")
+
+        return {
+            self.OUTPUT: current_input,
+        }

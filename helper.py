@@ -1,14 +1,11 @@
-from qgis.PyQt.QtCore import QCoreApplication, Qt
-from qgis.PyQt.QtWidgets import QApplication
+from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (
     QgsProcessingContext,
     QgsProcessingFeedback,
     QgsProject,
     QgsMessageLog,
-    QgsVectorLayer,
     Qgis,
 )
-from qgis.utils import iface
 import processing
 import time
 from constants import LOG_TAG
@@ -17,13 +14,17 @@ def log(msg, level=Qgis.MessageLevel.Info):
     QgsMessageLog.logMessage(msg, LOG_TAG, level)
     print(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
-def run_geobia_step(alg_id, params, step_name):
+def run_geobia_step(alg_id, params, step_name, context=None, feedback=None):
     log(f"--- Starting: {step_name} ---")
-    QApplication.setOverrideCursor(Qt.WaitCursor)  # visual "busy" indicator
-    try:
+
+    if context is None:
         context = QgsProcessingContext()
         context.setProject(QgsProject.instance())
+
+    if feedback is None:
         feedback = ResponsiveFeedback()
+
+    try:
         result = processing.run(alg_id, params, context=context, feedback=feedback)
 
         if feedback.had_fatal_error:
@@ -33,10 +34,19 @@ def run_geobia_step(alg_id, params, step_name):
         return result
     except Exception as e:
         log(f"FAILED: {step_name} -> {e}", Qgis.MessageLevel.Critical)
-        iface.messageBar().pushCritical("GEOBIA", f"{step_name} failed: {e}")
         raise
-    finally:
-        QApplication.restoreOverrideCursor()
+
+
+def add_layer_to_load_on_completion(context, destination, layer_name):
+    if not context or not destination:
+        return
+
+    details = QgsProcessingContext.LayerDetails(
+        layer_name,
+        context.project() if context.project() else QgsProject.instance(),
+        layer_name,
+    )
+    context.addLayerToLoadOnCompletion(destination, details)
 
 class ResponsiveFeedback(QgsProcessingFeedback):
     # Known benign OGR/GeoPackage transaction quirks - data is often

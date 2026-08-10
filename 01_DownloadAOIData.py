@@ -33,6 +33,7 @@ from qgis.core import (
     QgsCoordinateTransform,
     QgsProject,
     QgsWkbTypes,
+    QgsRasterLayer,
     QgsVectorLayer,
 )
 
@@ -45,6 +46,8 @@ import xml.etree.ElementTree as ET
 from urllib.parse import urlencode
 
 import requests
+
+from helper import add_layer_to_load_on_completion
 
 
 class DownloadAOIData(QgsProcessingAlgorithm):
@@ -1111,10 +1114,9 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         # Verify raster output
         # -----------------------------------------------------
 
-        imagery_layer = QgsVectorLayer(
+        imagery_layer = QgsRasterLayer(
             imagery_dest,
             "imagery_output_check",
-            "gdal",
         )
 
         if imagery_layer.isValid():
@@ -1159,6 +1161,12 @@ class DownloadAOIData(QgsProcessingAlgorithm):
 
         feedback.pushInfo(
             "=============================================="
+        )
+
+        add_layer_to_load_on_completion(
+            context,
+            imagery_dest,
+            "AOI imagery",
         )
 
         return {
