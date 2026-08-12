@@ -180,8 +180,8 @@ class AddAttributesToSegments(QgsProcessingAlgorithm):
         )
 
     def processAlgorithm(self, parameters, context, feedback):
-        segments_source = self.parameterAsSource(parameters, self.SEGMENTS, context)
-        if segments_source is None:
+        segments_layer = self.parameterAsVectorLayer(parameters, self.SEGMENTS, context)
+        if segments_layer is None:
             raise QgsProcessingException("Could not read segment layer.")
 
         imagery_layer = self.parameterAsRasterLayer(parameters, self.IMAGERY, context)
@@ -218,7 +218,7 @@ class AddAttributesToSegments(QgsProcessingAlgorithm):
             ]
         )
 
-        current_input = segments_source.source()
+        current_input = segments_layer
 
         for i, spec in enumerate(raster_specs):
             is_last_raster = i == len(raster_specs) - 1
