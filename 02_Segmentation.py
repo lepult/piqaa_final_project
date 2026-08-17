@@ -135,7 +135,7 @@ class SegmentImage(QgsProcessingAlgorithm):
         return "segment_image"
 
     def displayName(self):
-        return self.tr("03 - Segment + Metrics + Attributes")
+        return self.tr("02 - Segmentation")
 
     def group(self):
         return self.tr("LBS Workflow")

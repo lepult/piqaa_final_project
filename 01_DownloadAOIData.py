@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-01 - Download AOI Data
+01 - Prepare Reference
 
 Input:
     AOI polygon feature source.
@@ -111,7 +111,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         return "download_aoi_data"
 
     def displayName(self):
-        return self.tr("01 - Download AOI Data + Build Reference Layer")
+        return self.tr("01 - Prepare Reference")
 
     def group(self):
         return self.tr("LBS Workflow")
@@ -198,7 +198,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         )
 
         set_stage_progress(0, 100, 0.0, "Initializing workflow")
-        feedback.pushInfo("01 - DOWNLOAD AOI DATA + BUILD REFERENCE LAYER")
+        feedback.pushInfo("01 - Prepare Reference")
         feedback.pushInfo(
             f"Fixed target CRS: {self.TARGET_CRS}"
         )
@@ -1219,7 +1219,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         )
 
         feedback.pushInfo(
-            "Download AOI Data completed successfully."
+            "Prepare Reference completed successfully."
         )
 
         feedback.pushInfo(

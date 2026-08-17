@@ -39,7 +39,7 @@ class RandomForestClassification(QgsProcessingAlgorithm):
         return "random_forest_classification"
 
     def displayName(self):
-        return self.tr("06 - Random Forest Classification")
+        return self.tr("03 - Random Forest Classification Training")
 
     def group(self):
         return self.tr("LBS Workflow")
@@ -131,6 +131,13 @@ class RandomForestClassification(QgsProcessingAlgorithm):
         )
 
     def processAlgorithm(self, parameters, context, feedback):
+        def set_stage_progress(start, end, fraction, message=None):
+            frac = max(0.0, min(1.0, float(fraction)))
+            value = start + (end - start) * frac
+            feedback.setProgress(value)
+            if message:
+                feedback.setProgressText(message)
+
         segments_layer = self.parameterAsVectorLayer(parameters, self.FEATURE_SEGMENTS, context)
         if segments_layer is None:
             raise QgsProcessingException("Could not read input attributed segments layer.")
@@ -151,6 +158,7 @@ class RandomForestClassification(QgsProcessingAlgorithm):
         if "class" not in input_fields:
             raise QgsProcessingException('Input layer must contain text field "class".')
 
+        set_stage_progress(0, 20, 0.1, "Validating input layer...")
         current = segments_layer
 
         if "class_id" in input_fields:
@@ -166,6 +174,7 @@ class RandomForestClassification(QgsProcessingAlgorithm):
             )
             current = delete_res["OUTPUT"]
 
+        set_stage_progress(20, 35, 0.2, "Creating class_id field...")
         class_id_expr = (
             "CASE "
             "WHEN \"class\" = 'target' THEN 1 "
@@ -189,6 +198,7 @@ class RandomForestClassification(QgsProcessingAlgorithm):
         )
         current = class_id_res["OUTPUT"]
 
+        set_stage_progress(35, 45, 0.3, "Cleaning data and creating split field...")
         clean_res = run_step(
             "native:extractbyexpression",
             {
@@ -218,6 +228,7 @@ class RandomForestClassification(QgsProcessingAlgorithm):
         )
         current = split_res["OUTPUT"]
 
+        set_stage_progress(45, 60, 0.4, "Splitting into training and validation sets...")
         frac = validation_percent / 100.0
         expr_val = "\"__rf_rand\" <= {:.10f}".format(frac)
         expr_train = "\"__rf_rand\" > {:.10f}".format(frac)
@@ -248,6 +259,7 @@ class RandomForestClassification(QgsProcessingAlgorithm):
         )
         training_path = train_res["OUTPUT"]
 
+        set_stage_progress(60, 70, 0.5, "Validating training and validation sets...")
         train_layer = QgsVectorLayer(training_path, "rf_training_check", "ogr")
         valid_layer = QgsVectorLayer(validation_path, "rf_validation_check", "ogr")
         if not train_layer.isValid() or not valid_layer.isValid():
@@ -275,9 +287,11 @@ class RandomForestClassification(QgsProcessingAlgorithm):
                 + ", ".join(missing_valid)
             )
 
+        set_stage_progress(70, 75, 0.6, "Validating feature fields...")
         feedback.pushInfo(f"Training features: {train_count}")
         feedback.pushInfo(f"Validation features: {valid_count}")
 
+        set_stage_progress(75, 80, 0.7, "Training Random Forest model...")
         train_params = {
             "io.vd": [training_path],
             "io.stats": "",
@@ -302,6 +316,7 @@ class RandomForestClassification(QgsProcessingAlgorithm):
 
         run_step("otb:TrainVectorClassifier", train_params, context, feedback)
 
+        set_stage_progress(80, 90, 0.8, "Predicting on validation set...")
         pred_path = QgsProcessingUtils.generateTempFilename("rf_validation_pred.gpkg")
         classifier_attempts = [
             {
@@ -333,6 +348,7 @@ class RandomForestClassification(QgsProcessingAlgorithm):
         if last_exc is not None:
             raise QgsProcessingException(f"Validation classification failed: {last_exc}")
 
+        set_stage_progress(90, 95, 0.9, "Computing metrics...")
         pred_layer = QgsVectorLayer(pred_path, "rf_validation_pred", "ogr")
         if not pred_layer.isValid():
             raise QgsProcessingException("Could not open predicted validation layer.")
@@ -398,9 +414,11 @@ class RandomForestClassification(QgsProcessingAlgorithm):
         for line in metrics_lines:
             feedback.pushInfo(line)
 
+        set_stage_progress(95, 100, 0.95, "Finalizing output...")
         with open(metrics_file, "w", encoding="utf-8") as f:
             f.write("\n".join(metrics_lines) + "\n")
 
+        set_stage_progress(95, 100, 1.0, "Complete")
         return {
             self.MODEL_FILE: model_file,
             self.METRICS_FILE: metrics_file,
