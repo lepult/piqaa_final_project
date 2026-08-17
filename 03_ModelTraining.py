@@ -42,10 +42,10 @@ class RandomForestClassification(QgsProcessingAlgorithm):
         return self.tr("03 - Random Forest Classification Training")
 
     def group(self):
-        return self.tr("LBS Workflow")
+        return self.tr("GEOBIA Classifier")
 
     def groupId(self):
-        return "lbs_workflow"
+        return "geobia_classifier"
 
     def shortHelpString(self):
         return self.tr(

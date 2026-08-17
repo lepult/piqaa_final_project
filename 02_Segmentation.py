@@ -138,10 +138,10 @@ class SegmentImage(QgsProcessingAlgorithm):
         return self.tr("02 - Segmentation")
 
     def group(self):
-        return self.tr("LBS Workflow")
+        return self.tr("GEOBIA Classifier")
 
     def groupId(self):
-        return "lbs_workflow"
+        return "geobia_classifier"
 
     def shortHelpString(self):
         return self.tr(
@@ -304,7 +304,7 @@ class SegmentImage(QgsProcessingAlgorithm):
             "METHOD": 2,
             "DISCARD_NONMATCHING": False,
             "PREFIX": "",
-            "OUTPUT": output_dest,
+            "OUTPUT": "TEMPORARY_OUTPUT",
         }
 
         label_result = run_step(

@@ -114,10 +114,10 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         return self.tr("01 - Prepare Reference")
 
     def group(self):
-        return self.tr("LBS Workflow")
+        return self.tr("GEOBIA Classifier")
 
     def groupId(self):
-        return "lbs_workflow"
+        return "geobia_classifier"
 
     def shortHelpString(self):
         return self.tr(
@@ -968,7 +968,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         set_stage_progress(78, 90, 0.0, "Downloading DOP tiles")
 
         temp_dir = tempfile.mkdtemp(
-            prefix="qgis_lbs_dop_"
+            prefix="qgis_geobia_dop_"
         )
 
         tile_paths = []
