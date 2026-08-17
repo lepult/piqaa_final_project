@@ -65,8 +65,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
 
     AOI = "AOI"
     FEATURE_TYPE = "FEATURE_TYPE"
-    WFS_URL = "WFS_URL"
-    TARGET_POLYGONS = "TARGET_POLYGONS"
+    REFERENCE_LAYER = "REFERENCE_LAYER"
     AOI_IMAGERY = "AOI_IMAGERY"
 
     # ---------------------------------------------------------
@@ -78,6 +77,10 @@ class DownloadAOIData(QgsProcessingAlgorithm):
     # ---------------------------------------------------------
     # NRW DOP
     # ---------------------------------------------------------
+
+    WFS_URL = "https://www.wfs.nrw.de/geobasis/wfs_nw_alkis_vereinfacht"
+    TARGET_CLASS_NAME = "target"
+    BACKGROUND_CLASS_NAME = "background"
 
     DOP_INDEX_URL = (
         "https://www.opengeodata.nrw.de/produkte/geobasis/"
@@ -108,7 +111,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         return "download_aoi_data"
 
     def displayName(self):
-        return self.tr("01 - Download AOI Data")
+        return self.tr("01 - Download AOI Data + Build Reference Layer")
 
     def group(self):
         return self.tr("LBS Workflow")
@@ -119,8 +122,9 @@ class DownloadAOIData(QgsProcessingAlgorithm):
     def shortHelpString(self):
         return self.tr(
             "Downloads NRW ALKIS target polygons and NRW DOP imagery "
-            "for a polygon AOI. All outputs are explicitly written "
-            "in EPSG:25832."
+            "for a polygon AOI, then directly builds a reference layer "
+            "with hardcoded classes target/background. All outputs are "
+            "explicitly written in EPSG:25832."
         )
 
     # =========================================================
@@ -146,20 +150,9 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
-            QgsProcessingParameterString(
-                self.WFS_URL,
-                self.tr("WFS URL"),
-                defaultValue=(
-                    "https://www.wfs.nrw.de/geobasis/"
-                    "wfs_nw_alkis_vereinfacht"
-                ),
-            )
-        )
-
-        self.addParameter(
             QgsProcessingParameterFeatureSink(
-                self.TARGET_POLYGONS,
-                self.tr("Target polygons"),
+                self.REFERENCE_LAYER,
+                self.tr("Reference layer"),
                 QgsProcessing.TypeVectorPolygon,
                 None,
                 True,
@@ -196,9 +189,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         feedback.pushInfo(
             "=============================================="
         )
-        feedback.pushInfo(
-            "01 - DOWNLOAD AOI DATA"
-        )
+        feedback.pushInfo("01 - DOWNLOAD AOI DATA + BUILD REFERENCE LAYER")
         feedback.pushInfo(
             f"Fixed target CRS: {self.TARGET_CRS}"
         )
@@ -366,22 +357,11 @@ class DownloadAOIData(QgsProcessingAlgorithm):
             "=== 2. Downloading target polygons ==="
         )
 
-        wfs_url = self.parameterAsString(
-            parameters,
-            self.WFS_URL,
-            context,
-        ).strip()
-
         feature_type = self.parameterAsString(
             parameters,
             self.FEATURE_TYPE,
             context,
         ).strip()
-
-        if not wfs_url:
-            raise QgsProcessingException(
-                "WFS URL is empty."
-            )
 
         if not feature_type:
             raise QgsProcessingException(
@@ -473,7 +453,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
             }
 
             url = (
-                f"{wfs_url}?"
+                f"{self.WFS_URL}?"
                 f"{urlencode(request_params)}"
             )
 
@@ -663,17 +643,55 @@ class DownloadAOIData(QgsProcessingAlgorithm):
             f"intersection: {len(selected)}"
         )
 
+        if not selected:
+            raise QgsProcessingException(
+                "No target polygons intersect the AOI."
+            )
+
         # =====================================================
-        # 3. WRITE TARGET POLYGON OUTPUT
+        # 3. BUILD REFERENCE LAYER
         # =====================================================
 
-        feedback.pushInfo(
-            "=== 3. Writing target polygons ==="
-        )
+        feedback.pushInfo("=== 3. Building reference layer ===")
 
-        output_fields = QgsFields()
+        target_geometries = []
+        for feature in selected:
+            geom = feature.geometry()
+            if geom is None or geom.isEmpty():
+                continue
+            target_geometries.append(QgsGeometry(geom))
 
-        output_fields.append(
+        if not target_geometries:
+            raise QgsProcessingException(
+                "No valid target geometries available to build reference layer."
+            )
+
+        dissolved_target = target_geometries[0]
+        for geom in target_geometries[1:]:
+            if feedback.isCanceled():
+                return {}
+            dissolved_target = dissolved_target.combine(geom)
+
+        if dissolved_target is None or dissolved_target.isEmpty():
+            raise QgsProcessingException("Dissolved target geometry is empty.")
+
+        if not dissolved_target.isGeosValid():
+            feedback.pushInfo("Target geometry is invalid. Running makeValid().")
+            dissolved_target = dissolved_target.makeValid()
+
+        if dissolved_target.isEmpty():
+            raise QgsProcessingException(
+                "Target geometry became empty after makeValid()."
+            )
+
+        background_geom = aoi_geom.difference(dissolved_target)
+        if background_geom is None:
+            raise QgsProcessingException(
+                "Could not calculate AOI minus target polygons."
+            )
+
+        ref_fields = QgsFields()
+        ref_fields.append(
             QgsField(
                 "class",
                 QVariant.String,
@@ -683,85 +701,38 @@ class DownloadAOIData(QgsProcessingAlgorithm):
             )
         )
 
-        output_fields.append(
-            QgsField(
-                "source",
-                QVariant.String,
-                "String",
-                100,
-                0,
-            )
+        reference_sink, reference_dest = self.parameterAsSink(
+            parameters,
+            self.REFERENCE_LAYER,
+            context,
+            ref_fields,
+            QgsWkbTypes.MultiPolygon,
+            target_crs,
         )
 
-        # =====================================================
-        # IMPORTANT:
-        # Explicit sink CRS = EPSG:25832
-        # =====================================================
+        if reference_sink is None:
+            raise QgsProcessingException("Could not create reference layer output.")
 
-        target_sink, target_dest = (
-            self.parameterAsSink(
-                parameters,
-                self.TARGET_POLYGONS,
-                context,
-                output_fields,
-                QgsWkbTypes.MultiPolygon,
-                target_crs,
+        target_feature = QgsFeature(ref_fields)
+        target_feature.setGeometry(dissolved_target)
+        target_feature["class"] = self.TARGET_CLASS_NAME
+        if not reference_sink.addFeature(target_feature, QgsFeatureSink.FastInsert):
+            raise QgsProcessingException("Could not write target reference feature.")
+
+        if background_geom.isEmpty():
+            feedback.pushWarning(
+                "Background geometry is empty. Target polygons cover the entire AOI."
             )
-        )
+        else:
+            background_feature = QgsFeature(ref_fields)
+            background_feature.setGeometry(background_geom)
+            background_feature["class"] = self.BACKGROUND_CLASS_NAME
+            if not reference_sink.addFeature(background_feature, QgsFeatureSink.FastInsert):
+                raise QgsProcessingException("Could not write background reference feature.")
 
-        if target_sink is None:
+        del reference_sink
 
-            raise QgsProcessingException(
-                "Could not create target polygon output."
-            )
-
-        for feature in selected:
-
-            if feedback.isCanceled():
-
-                del target_sink
-
-                return {}
-
-            geom = feature.geometry()
-
-            if (
-                geom is None
-                or geom.isEmpty()
-            ):
-                continue
-
-            out_feature = QgsFeature(
-                output_fields
-            )
-
-            out_feature.setGeometry(
-                geom
-            )
-
-            out_feature["class"] = (
-                "target"
-            )
-
-            out_feature["source"] = (
-                "nrw_alkis_vereinfacht_wfs"
-            )
-
-            target_sink.addFeature(
-                out_feature,
-                QgsFeatureSink.FastInsert,
-            )
-
-        del target_sink
-
-        feedback.pushInfo(
-            "Target polygon output created."
-        )
-
-        feedback.pushInfo(
-            "Target polygon CRS: "
-            f"{self.TARGET_CRS}"
-        )
+        feedback.pushInfo("Reference layer created.")
 
         # =====================================================
         # 4. FIND NRW DOP TILES
@@ -1090,25 +1061,25 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         # Verify vector output
         # -----------------------------------------------------
 
-        target_output_layer = QgsVectorLayer(
-            target_dest,
-            "target_output_check",
+        reference_output_layer = QgsVectorLayer(
+            reference_dest,
+            "reference_output_check",
             "ogr",
         )
 
-        if not target_output_layer.isValid():
+        if not reference_output_layer.isValid():
 
             raise QgsProcessingException(
-                "Could not reopen the target polygon "
+                "Could not reopen the reference layer "
                 "output for CRS verification."
             )
 
         vector_crs = (
-            target_output_layer.sourceCrs()
+            reference_output_layer.sourceCrs()
         )
 
         feedback.pushInfo(
-            "Target polygon output CRS: "
+            "Reference layer output CRS: "
             f"{vector_crs.authid()}"
         )
 
@@ -1116,7 +1087,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
 
             raise QgsProcessingException(
                 "CRS verification FAILED. "
-                "Target polygons are "
+                "Reference layer is "
                 f"{vector_crs.authid()} instead of "
                 f"{self.TARGET_CRS}."
             )
@@ -1163,7 +1134,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         )
 
         feedback.pushInfo(
-            f"Target polygons CRS: {self.TARGET_CRS}"
+            f"Reference layer CRS: {self.TARGET_CRS}"
         )
 
         feedback.pushInfo(
@@ -1180,7 +1151,13 @@ class DownloadAOIData(QgsProcessingAlgorithm):
             "AOI imagery",
         )
 
+        add_layer_to_load_on_completion(
+            context,
+            reference_dest,
+            "Reference layer",
+        )
+
         return {
-            self.TARGET_POLYGONS: target_dest,
+            self.REFERENCE_LAYER: reference_dest,
             self.AOI_IMAGERY: imagery_dest,
         }

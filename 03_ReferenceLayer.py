@@ -30,7 +30,6 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingParameterFeatureSource,
-    QgsProcessingParameterString,
     QgsProcessingParameterFeatureSink,
     QgsProcessingException,
     QgsFeature,
@@ -63,8 +62,6 @@ class BuildReferenceLayer(QgsProcessingAlgorithm):
 
     AOI = "AOI"
     TARGET_POLYGONS = "TARGET_POLYGONS"
-    TARGET_CLASS_NAME = "TARGET_CLASS_NAME"
-    BACKGROUND_CLASS_NAME = "BACKGROUND_CLASS_NAME"
     REFERENCE_LAYER = "REFERENCE_LAYER"
 
     TARGET_CRS = "EPSG:25832"
@@ -82,7 +79,7 @@ class BuildReferenceLayer(QgsProcessingAlgorithm):
         return "build_reference_layer"
 
     def displayName(self):
-        return self.tr("02 - Build Reference Layer")
+        return self.tr("02 - Build Reference Layer (Deprecated)")
 
     def group(self):
         return self.tr("LBS Workflow")
@@ -92,6 +89,7 @@ class BuildReferenceLayer(QgsProcessingAlgorithm):
 
     def shortHelpString(self):
         return self.tr(
+            "DEPRECATED: Use 01 - Download AOI Data instead. "
             "Creates a reference layer from the AOI and target polygons. "
             "Target polygons are dissolved and subtracted from the AOI "
             "to create background polygons. All geometry processing is "
@@ -117,22 +115,6 @@ class BuildReferenceLayer(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
-            QgsProcessingParameterString(
-                self.TARGET_CLASS_NAME,
-                self.tr("Target class name"),
-                defaultValue="target",
-            )
-        )
-
-        self.addParameter(
-            QgsProcessingParameterString(
-                self.BACKGROUND_CLASS_NAME,
-                self.tr("Background class name"),
-                defaultValue="background",
-            )
-        )
-
-        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.REFERENCE_LAYER,
                 self.tr("Reference layer"),
@@ -148,6 +130,11 @@ class BuildReferenceLayer(QgsProcessingAlgorithm):
         context,
         feedback
     ):
+
+        feedback.pushWarning(
+            "This algorithm is deprecated. Use 01 - Download AOI Data, "
+            "which now builds the reference layer directly."
+        )
 
         feedback.pushInfo(
             "=== 1. Reading inputs ==="
@@ -496,27 +483,8 @@ class BuildReferenceLayer(QgsProcessingAlgorithm):
                 "Background geometry successfully created."
             )
 
-        # =========================================================
-        # 6. Read class names
-        # =========================================================
-
-        target_class = self.parameterAsString(
-            parameters,
-            self.TARGET_CLASS_NAME,
-            context
-        ).strip()
-
-        if not target_class:
-            target_class = "target"
-
-        background_class = self.parameterAsString(
-            parameters,
-            self.BACKGROUND_CLASS_NAME,
-            context
-        ).strip()
-
-        if not background_class:
-            background_class = "background"
+        target_class = "target"
+        background_class = "background"
 
         # =========================================================
         # 7. Create output sink
