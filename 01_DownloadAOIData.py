@@ -177,6 +177,13 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         feedback,
     ):
 
+        def set_stage_progress(start, end, fraction, message=None):
+            frac = max(0.0, min(1.0, float(fraction)))
+            value = start + (end - start) * frac
+            feedback.setProgress(value)
+            if message:
+                feedback.setProgressText(message)
+
         target_crs = QgsCoordinateReferenceSystem(
             self.TARGET_CRS
         )
@@ -189,6 +196,8 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         feedback.pushInfo(
             "=============================================="
         )
+
+        set_stage_progress(0, 100, 0.0, "Initializing workflow")
         feedback.pushInfo("01 - DOWNLOAD AOI DATA + BUILD REFERENCE LAYER")
         feedback.pushInfo(
             f"Fixed target CRS: {self.TARGET_CRS}"
@@ -204,6 +213,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         feedback.pushInfo(
             "=== 1. Reading AOI ==="
         )
+        set_stage_progress(0, 10, 0.0, "Reading AOI geometry")
 
         aoi_source = self.parameterAsSource(
             parameters,
@@ -236,10 +246,19 @@ class DownloadAOIData(QgsProcessingAlgorithm):
 
         aoi_geom = None
 
-        for feature in aoi_features:
+        total_aoi = len(aoi_features)
+
+        for i, feature in enumerate(aoi_features, 1):
 
             if feedback.isCanceled():
                 return {}
+
+            set_stage_progress(
+                0,
+                10,
+                i / total_aoi,
+                f"Preparing AOI geometry ({i}/{total_aoi})",
+            )
 
             geom = feature.geometry()
 
@@ -301,6 +320,8 @@ class DownloadAOIData(QgsProcessingAlgorithm):
                 "AOI became empty after CRS transformation."
             )
 
+        set_stage_progress(0, 10, 1.0, "AOI ready")
+
         # =====================================================
         # Create explicit EPSG:25832 AOI memory layer
         # =====================================================
@@ -356,6 +377,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         feedback.pushInfo(
             "=== 2. Downloading target polygons ==="
         )
+        set_stage_progress(10, 45, 0.0, "Downloading WFS target polygons")
 
         feature_type = self.parameterAsString(
             parameters,
@@ -425,6 +447,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
 
         all_features = []
         start_index = 0
+        page_no = 0
 
         while True:
 
@@ -460,6 +483,13 @@ class DownloadAOIData(QgsProcessingAlgorithm):
             feedback.pushInfo(
                 f"Requesting WFS page "
                 f"starting at {start_index}..."
+            )
+            page_no += 1
+            set_stage_progress(
+                10,
+                35,
+                min(page_no / 8.0, 1.0),
+                f"Requesting WFS pages (page {page_no})",
             )
 
             try:
@@ -591,6 +621,8 @@ class DownloadAOIData(QgsProcessingAlgorithm):
 
             start_index += self.PAGE_SIZE
 
+        set_stage_progress(10, 35, 1.0, "WFS download complete")
+
         # =====================================================
         # Exact AOI intersection
         # =====================================================
@@ -601,11 +633,20 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         )
 
         selected = []
+        total_features = len(all_features)
 
-        for feature in all_features:
+        for i, feature in enumerate(all_features, 1):
 
             if feedback.isCanceled():
                 return {}
+
+            if total_features > 0 and (i == total_features or i % 200 == 0):
+                set_stage_progress(
+                    35,
+                    45,
+                    i / total_features,
+                    f"Filtering AOI intersections ({i}/{total_features})",
+                )
 
             geom = feature.geometry()
 
@@ -642,6 +683,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
             "Target polygons after AOI "
             f"intersection: {len(selected)}"
         )
+        set_stage_progress(35, 45, 1.0, "Target polygons filtered")
 
         if not selected:
             raise QgsProcessingException(
@@ -653,13 +695,22 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         # =====================================================
 
         feedback.pushInfo("=== 3. Building reference layer ===")
+        set_stage_progress(45, 60, 0.0, "Building reference geometries")
 
         target_geometries = []
-        for feature in selected:
+        total_selected = len(selected)
+        for i, feature in enumerate(selected, 1):
             geom = feature.geometry()
             if geom is None or geom.isEmpty():
                 continue
             target_geometries.append(QgsGeometry(geom))
+            if i == total_selected or i % 200 == 0:
+                set_stage_progress(
+                    45,
+                    50,
+                    i / total_selected,
+                    f"Collecting target geometries ({i}/{total_selected})",
+                )
 
         if not target_geometries:
             raise QgsProcessingException(
@@ -667,10 +718,18 @@ class DownloadAOIData(QgsProcessingAlgorithm):
             )
 
         dissolved_target = target_geometries[0]
-        for geom in target_geometries[1:]:
+        total_dissolve = len(target_geometries) - 1
+        for i, geom in enumerate(target_geometries[1:], 1):
             if feedback.isCanceled():
                 return {}
             dissolved_target = dissolved_target.combine(geom)
+            if total_dissolve > 0 and (i == total_dissolve or i % 200 == 0):
+                set_stage_progress(
+                    50,
+                    55,
+                    i / total_dissolve,
+                    f"Dissolving targets ({i}/{total_dissolve})",
+                )
 
         if dissolved_target is None or dissolved_target.isEmpty():
             raise QgsProcessingException("Dissolved target geometry is empty.")
@@ -689,6 +748,8 @@ class DownloadAOIData(QgsProcessingAlgorithm):
             raise QgsProcessingException(
                 "Could not calculate AOI minus target polygons."
             )
+
+        set_stage_progress(45, 58, 1.0, "Creating reference output")
 
         ref_fields = QgsFields()
         ref_fields.append(
@@ -733,6 +794,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         del reference_sink
 
         feedback.pushInfo("Reference layer created.")
+        set_stage_progress(45, 60, 1.0, "Reference layer completed")
 
         # =====================================================
         # 4. FIND NRW DOP TILES
@@ -741,6 +803,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         feedback.pushInfo(
             "=== 4. Finding NRW DOP tiles ==="
         )
+        set_stage_progress(60, 78, 0.0, "Loading DOP tile index")
 
         try:
 
@@ -751,6 +814,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
             )
 
             response.raise_for_status()
+            set_stage_progress(60, 65, 1.0, "DOP tile index downloaded")
 
         except Exception as exc:
 
@@ -788,6 +852,8 @@ class DownloadAOIData(QgsProcessingAlgorithm):
 
                 elem.clear()
 
+            set_stage_progress(65, 70, 1.0, "DOP tile index parsed")
+
         except Exception as exc:
 
             raise QgsProcessingException(
@@ -805,8 +871,9 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         # =====================================================
 
         by_tile = {}
+        total_filenames = len(filenames)
 
-        for fname in filenames:
+        for i, fname in enumerate(filenames, 1):
 
             match = (
                 self.DOP_PATTERN.search(
@@ -867,6 +934,14 @@ class DownloadAOIData(QgsProcessingAlgorithm):
                     fname,
                 )
 
+            if total_filenames > 0 and (i == total_filenames or i % 1000 == 0):
+                set_stage_progress(
+                    70,
+                    78,
+                    i / total_filenames,
+                    f"Selecting newest DOP tiles ({i}/{total_filenames})",
+                )
+
         matching = [
             value[1]
             for value in by_tile.values()
@@ -890,6 +965,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         feedback.pushInfo(
             "=== 5. Downloading DOP tiles ==="
         )
+        set_stage_progress(78, 90, 0.0, "Downloading DOP tiles")
 
         temp_dir = tempfile.mkdtemp(
             prefix="qgis_lbs_dop_"
@@ -921,6 +997,12 @@ class DownloadAOIData(QgsProcessingAlgorithm):
                     f"Downloading tile "
                     f"{i}/{len(matching)}: "
                     f"{fname}"
+                )
+                set_stage_progress(
+                    78,
+                    90,
+                    i / len(matching),
+                    f"Downloading DOP tiles ({i}/{len(matching)})",
                 )
 
                 try:
@@ -959,6 +1041,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
             feedback.pushInfo(
                 "Building DOP mosaic..."
             )
+            set_stage_progress(90, 94, 0.0, "Building DOP mosaic")
 
             vrt_path = os.path.join(
                 temp_dir,
@@ -983,6 +1066,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
                 context=context,
                 feedback=feedback,
             )
+            set_stage_progress(90, 94, 1.0, "DOP mosaic ready")
 
             # =================================================
             # 6. CLIP DOP TO AOI
@@ -991,6 +1075,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
             feedback.pushInfo(
                 "=== 6. Clipping DOP imagery to AOI ==="
             )
+            set_stage_progress(94, 97, 0.0, "Clipping DOP to AOI")
 
             imagery_dest = (
                 self.parameterAsOutputLayer(
@@ -1036,6 +1121,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
                 context=context,
                 feedback=feedback,
             )
+            set_stage_progress(94, 97, 1.0, "AOI imagery clipped")
 
         finally:
 
@@ -1056,6 +1142,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         feedback.pushInfo(
             "=== 7. Verifying output CRS ==="
         )
+        set_stage_progress(97, 100, 0.0, "Verifying outputs")
 
         # -----------------------------------------------------
         # Verify vector output
@@ -1120,6 +1207,8 @@ class DownloadAOIData(QgsProcessingAlgorithm):
                     f"{raster_crs.authid()} instead of "
                     f"{self.TARGET_CRS}."
                 )
+
+        set_stage_progress(97, 100, 1.0, "Workflow complete")
 
         # =====================================================
         # COMPLETE
