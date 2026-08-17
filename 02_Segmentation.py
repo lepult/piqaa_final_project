@@ -152,88 +152,133 @@ class SegmentImage(QgsProcessingAlgorithm):
         )
 
     def initAlgorithm(self, config=None):
-        self.addParameter(
-            QgsProcessingParameterRasterLayer(
-                self.IMAGERY,
-                self.tr("Input imagery"),
+        imagery_param = QgsProcessingParameterRasterLayer(
+            self.IMAGERY,
+            self.tr("Input imagery"),
+        )
+        imagery_param.setHelp(
+            self.tr(
+                "Multi-band raster with 4 bands: Red (1), Green (2), Blue (3), NIR (4). "
+                "Typically 10m resolution orthorectified imagery."
             )
         )
+        self.addParameter(imagery_param)
 
-        self.addParameter(
-            QgsProcessingParameterFeatureSource(
-                self.REFERENCE_LAYER,
-                self.tr("Reference layer"),
-                [QgsProcessing.TypeVectorPolygon],
+        ref_param = QgsProcessingParameterFeatureSource(
+            self.REFERENCE_LAYER,
+            self.tr("Reference layer"),
+            [QgsProcessing.TypeVectorPolygon],
+        )
+        ref_param.setHelp(
+            self.tr(
+                "Reference layer with 'class' field (target/background). "
+                "Used to label segments after segmentation via spatial join."
             )
         )
+        self.addParameter(ref_param)
 
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.SPATIAL_RADIUS,
-                self.tr("Spatial radius"),
-                type=QgsProcessingParameterNumber.Integer,
-                defaultValue=SEGMENTATION_SPATIALR_PARAM,
-                minValue=1,
+        spatial_param = QgsProcessingParameterNumber(
+            self.SPATIAL_RADIUS,
+            self.tr("Spatial radius"),
+            type=QgsProcessingParameterNumber.Integer,
+            defaultValue=SEGMENTATION_SPATIALR_PARAM,
+            minValue=1,
+        )
+        spatial_param.setHelp(
+            self.tr(
+                "Spatial radius for OTB LargeScaleMeanShift segmentation (pixels). "
+                "Controls segment size; larger = bigger segments. Default: 20."
             )
         )
+        self.addParameter(spatial_param)
 
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.RANGE_RADIUS,
-                self.tr("Range radius"),
-                type=QgsProcessingParameterNumber.Integer,
-                defaultValue=SEGMENTATION_RANGER_PARAM,
-                minValue=1,
+        range_param = QgsProcessingParameterNumber(
+            self.RANGE_RADIUS,
+            self.tr("Range radius"),
+            type=QgsProcessingParameterNumber.Integer,
+            defaultValue=SEGMENTATION_RANGER_PARAM,
+            minValue=1,
+        )
+        range_param.setHelp(
+            self.tr(
+                "Range radius for spectral clustering (intensity units, 0-255). "
+                "Larger = more homogeneous segments. Default: 15."
             )
         )
+        self.addParameter(range_param)
 
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.MIN_SIZE,
-                self.tr("Minimum segment size"),
-                type=QgsProcessingParameterNumber.Integer,
-                defaultValue=SEGMENTATION_MINSIZE_PARAM,
-                minValue=1,
+        minsize_param = QgsProcessingParameterNumber(
+            self.MIN_SIZE,
+            self.tr("Minimum segment size"),
+            type=QgsProcessingParameterNumber.Integer,
+            defaultValue=SEGMENTATION_MINSIZE_PARAM,
+            minValue=1,
+        )
+        minsize_param.setHelp(
+            self.tr(
+                "Minimum segment area in pixels. Smaller segments merged to neighbors. "
+                "Default: 50 pixels."
             )
         )
+        self.addParameter(minsize_param)
 
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.XRAD,
-                self.tr("Texture X radius"),
-                type=QgsProcessingParameterNumber.Integer,
-                defaultValue=TEXTURE_EXTRACTION_XRAD_PARAMETER,
-                minValue=1,
+        xrad_param = QgsProcessingParameterNumber(
+            self.XRAD,
+            self.tr("Texture X radius"),
+            type=QgsProcessingParameterNumber.Integer,
+            defaultValue=TEXTURE_EXTRACTION_XRAD_PARAMETER,
+            minValue=1,
+        )
+        xrad_param.setHelp(
+            self.tr(
+                "X-direction radius for Haralick texture extraction (pixels). "
+                "Defines neighborhood for co-occurrence matrix. Default: 2."
             )
         )
+        self.addParameter(xrad_param)
 
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.YRAD,
-                self.tr("Texture Y radius"),
-                type=QgsProcessingParameterNumber.Integer,
-                defaultValue=TEXTURE_EXTRACTION_YRAD_PARAMETER,
-                minValue=1,
+        yrad_param = QgsProcessingParameterNumber(
+            self.YRAD,
+            self.tr("Texture Y radius"),
+            type=QgsProcessingParameterNumber.Integer,
+            defaultValue=TEXTURE_EXTRACTION_YRAD_PARAMETER,
+            minValue=1,
+        )
+        yrad_param.setHelp(
+            self.tr(
+                "Y-direction radius for Haralick texture extraction (pixels). "
+                "Defines neighborhood for co-occurrence matrix. Default: 2."
             )
         )
+        self.addParameter(yrad_param)
 
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.NBBIN,
-                self.tr("Texture number of bins"),
-                type=QgsProcessingParameterNumber.Integer,
-                defaultValue=TEXTURE_EXTRACTION_NBBIN_PARAM,
-                minValue=2,
+        nbbin_param = QgsProcessingParameterNumber(
+            self.NBBIN,
+            self.tr("Texture number of bins"),
+            type=QgsProcessingParameterNumber.Integer,
+            defaultValue=TEXTURE_EXTRACTION_NBBIN_PARAM,
+            minValue=2,
+        )
+        nbbin_param.setHelp(
+            self.tr(
+                "Number of bins for Haralick texture histogram discretization. "
+                "Higher = finer texture detail but longer computation. Default: 8."
             )
         )
+        self.addParameter(nbbin_param)
 
-        self.addParameter(
-            QgsProcessingParameterFeatureSink(
-                self.OUTPUT,
-                self.tr("Attributed segments"),
-                QgsProcessing.TypeVectorPolygon,
+        output_param = QgsProcessingParameterFeatureSink(
+            self.OUTPUT,
+            self.tr("Attributed segments"),
+            QgsProcessing.TypeVectorPolygon,
+        )
+        output_param.setHelp(
+            self.tr(
+                "Output segment layer with class field and computed attributes: "
+                "Haralick textures (32), NDVI, band means (16), and shape metrics (3)."
             )
         )
+        self.addParameter(output_param)
 
     def processAlgorithm(self, parameters, context, feedback):
         imagery_layer = self.parameterAsRasterLayer(parameters, self.IMAGERY, context)

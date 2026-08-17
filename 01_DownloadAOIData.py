@@ -133,38 +133,58 @@ class DownloadAOIData(QgsProcessingAlgorithm):
 
     def initAlgorithm(self, config=None):
 
-        self.addParameter(
-            QgsProcessingParameterFeatureSource(
-                self.AOI,
-                self.tr("AOI polygon"),
-                [QgsProcessing.TypeVectorPolygon],
+        aoi_param = QgsProcessingParameterFeatureSource(
+            self.AOI,
+            self.tr("AOI polygon"),
+            [QgsProcessing.TypeVectorPolygon],
+        )
+        aoi_param.setHelp(
+            self.tr(
+                "Polygon feature defining the area of interest. Supports any CRS; "
+                "will be transformed to EPSG:25832 (UTM zone 32N)."
             )
         )
+        self.addParameter(aoi_param)
 
-        self.addParameter(
-            QgsProcessingParameterString(
-                self.FEATURE_TYPE,
-                self.tr("WFS feature type"),
-                defaultValue="ave:GebaeudeBauwerk",
+        feature_type_param = QgsProcessingParameterString(
+            self.FEATURE_TYPE,
+            self.tr("WFS feature type"),
+            defaultValue="ave:GebaeudeBauwerk",
+        )
+        feature_type_param.setHelp(
+            self.tr(
+                "WFS feature type identifier. Queries the NRW ALKIS WFS service. "
+                "Default 'ave:GebaeudeBauwerk' retrieves building polygons."
             )
         )
+        self.addParameter(feature_type_param)
 
-        self.addParameter(
-            QgsProcessingParameterFeatureSink(
-                self.REFERENCE_LAYER,
-                self.tr("Reference layer"),
-                QgsProcessing.TypeVectorPolygon,
-                None,
-                True,
+        ref_param = QgsProcessingParameterFeatureSink(
+            self.REFERENCE_LAYER,
+            self.tr("Reference layer"),
+            QgsProcessing.TypeVectorPolygon,
+            None,
+            True,
+        )
+        ref_param.setHelp(
+            self.tr(
+                "Output reference layer with two classes: 'target' (downloaded buildings) "
+                "and 'background' (AOI minus targets). Used for supervised classification."
             )
         )
+        self.addParameter(ref_param)
 
-        self.addParameter(
-            QgsProcessingParameterRasterDestination(
-                self.AOI_IMAGERY,
-                self.tr("AOI-clipped DOP imagery"),
+        imagery_param = QgsProcessingParameterRasterDestination(
+            self.AOI_IMAGERY,
+            self.tr("AOI-clipped DOP imagery"),
+        )
+        imagery_param.setHelp(
+            self.tr(
+                "Output raster: DOP (Digital Orthophoto) imagery from NRW, "
+                "clipped to AOI extent in EPSG:25832. 4-band RGBA raster."
             )
         )
+        self.addParameter(imagery_param)
 
     # =========================================================
     # Process

@@ -55,80 +55,118 @@ class RandomForestClassification(QgsProcessingAlgorithm):
         )
 
     def initAlgorithm(self, config=None):
-        self.addParameter(
-            QgsProcessingParameterFeatureSource(
-                self.FEATURE_SEGMENTS,
-                self.tr("Input attributed segments"),
-                [QgsProcessing.TypeVectorPolygon],
+        segments_param = QgsProcessingParameterFeatureSource(
+            self.FEATURE_SEGMENTS,
+            self.tr("Input attributed segments"),
+            [QgsProcessing.TypeVectorPolygon],
+        )
+        segments_param.setHelp(
+            self.tr(
+                "Polygon segments with class field ('target'/'background') and numeric feature fields. "
+                "Typically output from Step 02 - Segmentation."
             )
         )
+        self.addParameter(segments_param)
 
-        self.addParameter(
-            QgsProcessingParameterField(
-                self.FEATURE_FIELDS,
-                self.tr("Feature fields for RF"),
-                parentLayerParameterName=self.FEATURE_SEGMENTS,
-                type=QgsProcessingParameterField.Numeric,
-                allowMultiple=True,
+        fields_param = QgsProcessingParameterField(
+            self.FEATURE_FIELDS,
+            self.tr("Feature fields for RF"),
+            parentLayerParameterName=self.FEATURE_SEGMENTS,
+            type=QgsProcessingParameterField.Numeric,
+            allowMultiple=True,
+        )
+        fields_param.setHelp(
+            self.tr(
+                "Select one or more numeric fields to use as features for Random Forest training. "
+                "Examples: textures (red_energy, red_entropy), NDVI, band means, shape metrics."
             )
         )
+        self.addParameter(fields_param)
 
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.VALIDATION_PERCENT,
-                self.tr("Validation percent"),
-                type=QgsProcessingParameterNumber.Double,
-                defaultValue=30.0,
-                minValue=1.0,
-                maxValue=99.0,
+        val_percent_param = QgsProcessingParameterNumber(
+            self.VALIDATION_PERCENT,
+            self.tr("Validation percent"),
+            type=QgsProcessingParameterNumber.Double,
+            defaultValue=30.0,
+            minValue=1.0,
+            maxValue=99.0,
+        )
+        val_percent_param.setHelp(
+            self.tr(
+                "Percentage of segments used for validation (remainder for training). "
+                "Default: 30% validation, 70% training."
             )
         )
+        self.addParameter(val_percent_param)
 
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.RF_MAX_DEPTH,
-                self.tr("RF max tree depth"),
-                type=QgsProcessingParameterNumber.Integer,
-                defaultValue=5,
-                minValue=1,
+        max_depth_param = QgsProcessingParameterNumber(
+            self.RF_MAX_DEPTH,
+            self.tr("RF max tree depth"),
+            type=QgsProcessingParameterNumber.Integer,
+            defaultValue=5,
+            minValue=1,
+        )
+        max_depth_param.setHelp(
+            self.tr(
+                "Maximum depth of Random Forest trees. Deeper = more complex model, higher overfit risk. "
+                "Default: 5."
             )
         )
+        self.addParameter(max_depth_param)
 
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.RF_MIN_SAMPLES,
-                self.tr("RF min samples per node"),
-                type=QgsProcessingParameterNumber.Integer,
-                defaultValue=10,
-                minValue=1,
+        min_samples_param = QgsProcessingParameterNumber(
+            self.RF_MIN_SAMPLES,
+            self.tr("RF min samples per node"),
+            type=QgsProcessingParameterNumber.Integer,
+            defaultValue=10,
+            minValue=1,
+        )
+        min_samples_param.setHelp(
+            self.tr(
+                "Minimum number of samples required to split a node. "
+                "Higher = smoother model, lower risk of overfitting. Default: 10."
             )
         )
+        self.addParameter(min_samples_param)
 
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.RF_NB_TREES,
-                self.tr("RF number of trees"),
-                type=QgsProcessingParameterNumber.Integer,
-                defaultValue=100,
-                minValue=1,
+        nbtrees_param = QgsProcessingParameterNumber(
+            self.RF_NB_TREES,
+            self.tr("RF number of trees"),
+            type=QgsProcessingParameterNumber.Integer,
+            defaultValue=100,
+            minValue=1,
+        )
+        nbtrees_param.setHelp(
+            self.tr(
+                "Number of decision trees in the ensemble. More trees = better generalization but slower. "
+                "Default: 100."
             )
         )
+        self.addParameter(nbtrees_param)
 
-        self.addParameter(
-            QgsProcessingParameterFileDestination(
-                self.MODEL_FILE,
-                self.tr("Model output file"),
-                fileFilter="Model files (*.model *.file *.txt);;All files (*.*)",
+        model_param = QgsProcessingParameterFileDestination(
+            self.MODEL_FILE,
+            self.tr("Model output file"),
+            fileFilter="Model files (*.model *.file *.txt);;All files (*.*)",
+        )
+        model_param.setHelp(
+            self.tr(
+                "Path to save the trained Random Forest model. Use for predicting on new data."
             )
         )
+        self.addParameter(model_param)
 
-        self.addParameter(
-            QgsProcessingParameterFileDestination(
-                self.METRICS_FILE,
-                self.tr("Metrics output text file"),
-                fileFilter="Text files (*.txt);;All files (*.*)",
+        metrics_param = QgsProcessingParameterFileDestination(
+            self.METRICS_FILE,
+            self.tr("Metrics output text file"),
+            fileFilter="Text files (*.txt);;All files (*.*)",
+        )
+        metrics_param.setHelp(
+            self.tr(
+                "Path to save validation metrics (accuracy, precision, recall, F1, confusion matrix counts)."
             )
         )
+        self.addParameter(metrics_param)
 
     def processAlgorithm(self, parameters, context, feedback):
         def set_stage_progress(start, end, fraction, message=None):
