@@ -21,7 +21,7 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingParameterFeatureSource,
-    QgsProcessingParameterString,
+    QgsProcessingParameterEnum,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterRasterDestination,
     QgsProcessingException,
@@ -73,6 +73,31 @@ class DownloadAOIData(QgsProcessingAlgorithm):
     # ---------------------------------------------------------
 
     TARGET_CRS = "EPSG:25832"
+
+    # ---------------------------------------------------------
+    # WFS Feature Type Filters
+    # ---------------------------------------------------------
+
+    FEATURE_FILTERS = {
+        0: {
+            "name": "Greenhouses",
+            "typeNames": "ave:GebaeudeBauwerk",
+            "field": "ave:gfkzshh",
+            "value": "31001_2740",
+        },
+        1: {
+            "name": "Windrad",
+            "typeNames": "ave:GebaeudeBauwerk",
+            "field": "ave:gfkzshh",
+            "value": "51002_1220",
+        },
+        2: {
+            "name": "Solarzellen",
+            "typeNames": "ave:GebaeudeBauwerk",
+            "field": "ave:gfkzshh",
+            "value": "51002_1230",
+        },
+    }
 
     # ---------------------------------------------------------
     # NRW DOP
@@ -146,15 +171,17 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         )
         self.addParameter(aoi_param)
 
-        feature_type_param = QgsProcessingParameterString(
+        feature_type_options = [self.FEATURE_FILTERS[i]["name"] for i in sorted(self.FEATURE_FILTERS.keys())]
+        feature_type_param = QgsProcessingParameterEnum(
             self.FEATURE_TYPE,
             self.tr("WFS feature type"),
-            defaultValue="ave:GebaeudeBauwerk",
+            options=feature_type_options,
+            defaultValue=0,
         )
         feature_type_param.setHelp(
             self.tr(
-                "WFS feature type identifier. Queries the NRW ALKIS WFS service. "
-                "Default 'ave:GebaeudeBauwerk' retrieves building polygons."
+                "Select the feature type to download from NRW ALKIS WFS service. "
+                "Each option applies a specific filter to the WFS query."
             )
         )
         self.addParameter(feature_type_param)
@@ -399,22 +426,30 @@ class DownloadAOIData(QgsProcessingAlgorithm):
         )
         set_stage_progress(10, 45, 0.0, "Downloading WFS target polygons")
 
-        feature_type = self.parameterAsString(
+        feature_type_index = self.parameterAsEnum(
             parameters,
             self.FEATURE_TYPE,
             context,
-        ).strip()
+        )
 
-        if not feature_type:
+        if feature_type_index not in self.FEATURE_FILTERS:
             raise QgsProcessingException(
-                "WFS feature type is empty."
+                f"Invalid feature type index: {feature_type_index}"
             )
+
+        filter_config = self.FEATURE_FILTERS[feature_type_index]
+        feature_type_name = filter_config["name"]
+        typeNames = filter_config["typeNames"]
+        filter_field = filter_config["field"]
+        filter_value = filter_config["value"]
+
+        feedback.pushInfo(f"Selected feature type: {feature_type_name}")
 
         # =====================================================
         # WFS filter
         # =====================================================
 
-        filter_xml = (
+        bbox_filter = (
             "<fes:Filter "
             "xmlns:fes='http://www.opengis.net/fes/2.0' "
             "xmlns:gml='http://www.opengis.net/gml/3.2' "
@@ -443,23 +478,24 @@ class DownloadAOIData(QgsProcessingAlgorithm):
             "</gml:Envelope>"
 
             "</fes:BBOX>"
-
-            "<fes:PropertyIsEqualTo>"
-
-            "<fes:ValueReference>"
-            "ave:gfkzshh"
-            "</fes:ValueReference>"
-
-            "<fes:Literal>"
-            "31001_2740"
-            "</fes:Literal>"
-
-            "</fes:PropertyIsEqualTo>"
-
-            "</fes:And>"
-
-            "</fes:Filter>"
         )
+
+        if filter_field and filter_value:
+            filter_xml = (
+                bbox_filter
+                + "<fes:PropertyIsEqualTo>"
+                + "<fes:ValueReference>"
+                + f"{filter_field}"
+                + "</fes:ValueReference>"
+                + "<fes:Literal>"
+                + f"{filter_value}"
+                + "</fes:Literal>"
+                + "</fes:PropertyIsEqualTo>"
+                + "</fes:And>"
+                + "</fes:Filter>"
+            )
+        else:
+            filter_xml = bbox_filter + "</fes:And></fes:Filter>"
 
         # =====================================================
         # Download WFS pages
@@ -478,7 +514,7 @@ class DownloadAOIData(QgsProcessingAlgorithm):
                 "service": "WFS",
                 "version": "2.0.0",
                 "request": "GetFeature",
-                "typeNames": feature_type,
+                "typeNames": typeNames,
 
                 # IMPORTANT:
                 # Explicitly request EPSG:25832.
