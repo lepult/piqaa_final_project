@@ -61,7 +61,7 @@ class CreateMetricLayers(QgsProcessingAlgorithm):
         return "create_metric_layers"
 
     def displayName(self):
-        return self.tr("04 - Create Metric Layers")
+        return self.tr("04 - Create Metric Layers (Deprecated)")
 
     def group(self):
         return self.tr("LBS Workflow")
@@ -71,6 +71,7 @@ class CreateMetricLayers(QgsProcessingAlgorithm):
 
     def shortHelpString(self):
         return self.tr(
+            "DEPRECATED: Use 03 - Segment + Metrics + Attributes instead. "
             "Creates Haralick texture layers for selected channels and optionally "
             "creates an NDVI raster from the same imagery."
         )
@@ -177,6 +178,11 @@ class CreateMetricLayers(QgsProcessingAlgorithm):
         )
 
     def processAlgorithm(self, parameters, context, feedback):
+        feedback.pushWarning(
+            "This algorithm is deprecated. Use 03 - Segment + Metrics + Attributes "
+            "to run segmentation, metric creation, and segment attribution in one step."
+        )
+
         imagery_layer = self.parameterAsRasterLayer(parameters, self.IMAGERY, context)
         if imagery_layer is None:
             raise QgsProcessingException("Could not read input imagery.")

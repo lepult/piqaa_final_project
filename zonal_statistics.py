@@ -94,7 +94,7 @@ class AddAttributesToSegments(QgsProcessingAlgorithm):
         return "add_attributes_to_segments"
 
     def displayName(self):
-        return self.tr("05 - Add Attributes to Segments")
+        return self.tr("05 - Add Attributes to Segments (Deprecated)")
 
     def group(self):
         return self.tr("LBS Workflow")
@@ -104,6 +104,7 @@ class AddAttributesToSegments(QgsProcessingAlgorithm):
 
     def shortHelpString(self):
         return self.tr(
+            "DEPRECATED: Use 03 - Segment + Metrics + Attributes instead. "
             "Adds zonal texture, spectral, NDVI, and shape metric attributes to a segment layer."
         )
 
@@ -180,6 +181,11 @@ class AddAttributesToSegments(QgsProcessingAlgorithm):
         )
 
     def processAlgorithm(self, parameters, context, feedback):
+        feedback.pushWarning(
+            "This algorithm is deprecated. Use 03 - Segment + Metrics + Attributes "
+            "to run segmentation, metric creation, and segment attribution in one step."
+        )
+
         segments_layer = self.parameterAsVectorLayer(parameters, self.SEGMENTS, context)
         if segments_layer is None:
             raise QgsProcessingException("Could not read segment layer.")
